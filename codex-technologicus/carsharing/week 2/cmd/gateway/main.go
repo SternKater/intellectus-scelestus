@@ -61,20 +61,17 @@ func NewRateLimiter(rdb *redis.Client, limit int, windowMs int) (*RateLimiterMid
 // Middleware
 func (m *RateLimiterMiddleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		now := time.Now().UnixNano() / int64(time.Millisecond)
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
 			host = r.RemoteAddr // ops
 		}
 		key := "rate:fixed:" + host
-		// w.WriteHeader(http.StatusOK)
-		// w.Write([]byte(key))
 
 		// 200ms timeout. otherwise we just skipping this step
 		redisCtx, cancel := context.WithTimeout(r.Context(), 200*time.Millisecond)
 		defer cancel()
 
-		res, err := m.rdb.EvalSha(redisCtx, m.scriptSHA, []string{key}, now, m.limit, m.windowMs).Result()
+		res, err := m.rdb.EvalSha(redisCtx, m.scriptSHA, []string{key}, m.limit, m.windowMs).Result()
 		if err != nil {
 			log.Printf("Internal Error (Redis EvalSha): %v", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -83,7 +80,7 @@ func (m *RateLimiterMiddleware) Handler(next http.Handler) http.Handler {
 
 		// 0 - limit exseeded
 		if res.(int64) == 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(m.windowMs/1000))
+			w.Header().Set("Retry-After", strconv.Itoa(m.windowMs))
 			w.WriteHeader(http.StatusTooManyRequests)
 			w.Write([]byte("429 Too Many Requests. Fixed window blocked the req.\n"))
 			return // Skip the chain
@@ -113,7 +110,7 @@ func main() {
 	}
 
 	// 2. RateLimiter(3 due 10s)
-	limiter, err := NewRateLimiter(rdb, 3, 1000)
+	limiter, err := NewRateLimiter(rdb, 3, 10)
 	if err != nil {
 		log.Fatalf("Error on init: %v", err)
 	}
